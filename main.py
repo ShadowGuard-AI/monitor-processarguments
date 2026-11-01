@@ -47,6 +47,14 @@ def mask_cmdline(cmdline):
         if arg.startswith("-") and "=" in arg:
             parts.append(arg.split("=", 1)[0] + "=" + MASKED)
         elif arg.startswith("-") and len(arg) > 1:
+            # A value attached to its flag walks straight through this
+            # branch into the log: a short flag carrying a password with
+            # no separator, in the shape tools write as a dash, a letter,
+            # and the value run together, is kept whole because it looks
+            # like a flag name. Only separated values and the value half
+            # of an equals pair are masked, so the masking promise has a
+            # hole exactly where command line passwords are most often
+            # written.
             parts.append(arg)
         else:
             parts.append(MASKED)
@@ -83,6 +91,11 @@ def monitor_processes(interval, logfile, exclude_list):
     try:
         for process in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
             try:
+                # A baseline entry whose create time could not be read is
+                # keyed with None in place of the time. When a later cycle
+                # reads the time properly, the same long running process has
+                # a different key and is reported as new, with its command
+                # line logged, though it predates the monitor.
                 known_processes.add(process_key(process))
             except Exception:
                 continue
@@ -104,6 +117,11 @@ def monitor_processes(interval, logfile, exclude_list):
                     current_processes.add(key)
 
                     if key not in known_processes:
+                        # The name compared here is the one psutil reports, which on
+                        # Linux is the kernel's short name, cut off at fifteen
+                        # characters. Excluding a longer process name can therefore
+                        # never match, and the operator gets no sign that the
+                        # exclusion is inert.
                         if not is_excluded(name, exclude_list):
                             masked_cmdline = mask_cmdline(cmdline)
                             argument_count = len(cmdline)
@@ -122,6 +140,11 @@ def monitor_processes(interval, logfile, exclude_list):
                     continue
             # Prune processes that are no longer present, so the known set
             # tracks live processes and a reused PID is seen as new.
+            # A process has to be caught alive by a poll to exist for
+            # me. Anything that starts and exits within one interval,
+            # which is most short commands, the exact shape a suspicious
+            # one shot invocation takes, is never in any cycle's set and
+            # never logged.
             known_processes.intersection_update(current_processes)
             consecutive_failures = 0
 
